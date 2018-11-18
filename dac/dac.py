@@ -1,17 +1,18 @@
 import baselines
-from dac.util.learning_rate import LearningRate
-from dac.util.replay_buffer import ReplayBuffer
-from dac.networks.adversary import Discriminator
-from dac.networks.TD3 import TD3
-from dac.dataset.mujoco_dset import Mujoco_Dset
+from util.learning_rate import LearningRate
+from util.replay_buffer import ReplayBuffer
+from networks.adversary import Discriminator
+from networks.TD3 import TD3
+from dataset.mujoco_dset import Mujoco_Dset
 import gym
 import argparse
+import numpy as np
 
 def argsparser():
     parser = argparse.ArgumentParser("Tensorflow Implementation of GAIL")
     parser.add_argument('--env_id', help='environment ID', default='Hopper-v2')
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
-    parser.add_argument('--expert_path', type=str, default='data/deterministic.trpo.Hopper.0.00.npz')
+    parser.add_argument('--expert_path', type=str, default='../baselines/baselines/data/deterministic.trpo.Hopper.0.00.npz')
     parser.add_argument('--traj_num', help='Number of Traj', type=int, default=4)
     return parser.parse_args()
 
@@ -27,22 +28,23 @@ def main(args):
 	max_action = float(env.action_space.high[0])
 
 	lr = LearningRate.getInstance()
-	lr.setLR(10e-3)
+	lr.setLR(10**(-3))
 	lr.setDecay(1.0/2.0)
 
-	td3 = TD3(state_dim, action_dim, max_action, 40, 10e5) #state_dim, action_dim, max_action, actor_clipping, decay_steps
+	td3 = TD3(state_dim, action_dim, max_action, 40, 10**5) #state_dim, action_dim, max_action, actor_clipping, decay_steps
 
 	discriminator = Discriminator(state_dim + action_dim)
 
 	batch_size = 100
 	num_steps = 10e7 # 1 million timesteps
 	T = 1000 # Trajectory length == T in the pseudo-code
+	iterations = int(num_steps / (batch_size*T))
 
-	for i in range(num_steps / (batch_size*T)):
+	for i in range(iterations):
 		# Sample from policy
 		obs = env.reset()
 		for j in range(T):
-			action = td3.sample(obs)
+			action = td3.select_action(np.array(obs))
 			next_state, reward, done, _ = env.step(action)
 			actor_replay_buffer.add((obs, action, next_state), done)
 			if done:
@@ -50,9 +52,31 @@ def main(args):
 			else:
 				obs = next_state
 
+		actor_replay_buffer.addAbsorbing()
+
 		discriminator.train(actor_replay_buffer, expert_buffer, T, batch_size)
 
 		td3.train(discriminator, actor_replay_buffer, T, batch_size) #discriminator, replay_buf, iterations, batch_size=100
+
+		evaluate_policy(env, td3)
+
+# Runs policy for X episodes and returns average reward
+def evaluate_policy(env, policy, eval_episodes=10):
+	avg_reward = 0.
+	for _ in range(eval_episodes):
+		obs = env.reset()
+		done = False
+		while not done:
+			action = policy.select_action(np.array(obs))
+			obs, reward, done, _ = env.step(action)
+			avg_reward += reward
+
+	avg_reward /= eval_episodes
+
+	print ("---------------------------------------")
+	print ("Evaluation over %d episodes: %f" % (eval_episodes, avg_reward))
+	print ("---------------------------------------")
+	return avg_reward
 
 
 if __name__ == '__main__':

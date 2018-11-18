@@ -1,3 +1,4 @@
 baselines
 torch
 jupyter
+tqdm

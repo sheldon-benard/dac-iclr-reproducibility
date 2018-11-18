@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
-from dac.util import replay_buffer
-from dac.util.learning_rate import LearningRate
+from util import replay_buffer
+from util.learning_rate import LearningRate
 from torch.nn.utils import clip_grad_value_
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -23,10 +23,15 @@ class Actor(nn.Module):
 		self.max_action = max_action
 
 	def forward(self, x):
-		x = F.relu(self.l1(x))
-		x = F.relu(self.l2(x))
+		x = x.float()
+		x = torch.relu(self.l1(x))
+		x = torch.relu(self.l2(x))
 		x = self.max_action * torch.tanh(self.l3(x))
 		return x
+
+	def act(self, x):
+		x = torch.FloatTensor(x).to(device)
+		return self(x)
 
 
 class Critic(nn.Module):
@@ -45,6 +50,7 @@ class Critic(nn.Module):
 
 	def forward(self, x, u):
 		xu = torch.cat([x, u], 1)
+		xu = xu.float()
 
 		x1 = F.relu(self.l1(xu))
 		x1 = F.relu(self.l2(x1))
@@ -85,21 +91,27 @@ class TD3(object):
 		return self.actor(state).cpu().data.numpy().flatten()
 
 	def adjust_critic_learning_rate(self, lr):
-		for param_group in self.critic_optimizer:
+		for param_group in self.critic_optimizer.param_groups:
 			param_group['lr'] = lr
 
 	def adjust_actor_learning_rate(self, lr):
-		for param_group in self.actor_optimizer:
+		for param_group in self.actor_optimizer.param_groups:
 			param_group['lr'] = lr
 
 	def sample(self, state):
-		next_state = self.actor(state)
+		next_state = self.actor(torch.FloatTensor(state).to(device))
 		return torch.FloatTensor(next_state).to(device)
 
 	def reward(self, discriminator, states, actions):
 		states_actions = torch.cat([states, actions], 1)
+		output = torch.FloatTensor(discriminator(states_actions)).to(device)
 
-		return torch.FloatTensor(discriminator.reward(states_actions)).to(device)
+		rewards = []
+		for i in range(states_actions.size(0)):
+			reward = discriminator.criterion(output[i], torch.ones((1, 1)).to(device)) - discriminator.criterion(output[i], torch.zeros((1, 1)).to(device))
+			rewards.append(reward)
+
+		return torch.FloatTensor(np.array(rewards, dtype=np.float32).reshape(-1,1)).to(device)
 
 	def train(self, discriminator, replay_buf, iterations, batch_size=100, discount=0.99, tau=0.005, policy_noise=0.2,
 			  noise_clip=0.5, policy_freq=2):
@@ -111,25 +123,17 @@ class TD3(object):
 
 		for it in range(iterations):
 
-			if it != 0 and it % self.decay_steps == 0:
-				LearningRate.getInstance().decay()
-				lr = LearningRate.getInstance().getLR()
-				self.adjust_actor_learning_rate(lr)
-				self.adjust_critic_learning_rate(lr)
-
-
 			# Sample replay buffer
-			x, y, u = replay_buf.sample(batch_size)
+			x, y, u, d = replay_buf.sample(batch_size)
 			state = torch.FloatTensor(x).to(device)
-			action = torch.FloatTensor(u).to(device)
-			next_state = torch.FloatTensor(y).to(device)
-			# done = torch.FloatTensor(1 - d).to(device) # with absorbing state, there is no termination
+			action = torch.FloatTensor(y).to(device)
+			next_state = torch.FloatTensor(u).to(device)
+			done = torch.FloatTensor(1 - d).to(device).view(-1,1) # with absorbing state, there is no termination?
 			# reward = torch.FloatTensor(r).to(device)
 
-			reward = reward(discriminator, state, action)
-
+			reward = self.reward(discriminator, state, action)
 			# Select action according to policy and add clipped noise
-			noise = torch.FloatTensor(u).data.normal_(0, policy_noise).to(device)
+			noise = torch.FloatTensor(y).data.normal_(0, policy_noise).to(device)
 			noise = noise.clamp(-noise_clip, noise_clip)
 			next_action = (self.actor_target(next_state) + noise).clamp(-self.max_action, self.max_action)
 			next_action = next_action.clamp(-self.max_action, self.max_action)
@@ -137,15 +141,15 @@ class TD3(object):
 			# Compute the target Q value
 			target_Q1, target_Q2 = self.critic_target(next_state, next_action)
 			target_Q = torch.min(target_Q1, target_Q2)
-			#target_Q = reward + (done * discount * target_Q).detach()
-			target_Q = reward + (discount * target_Q).detach()
+			target_Q = reward + (done * discount * target_Q).detach()
+			# target_Q = reward + (discount * target_Q).detach()
 
 			# Get current Q estimates
 			current_Q1, current_Q2 = self.critic(state, action)
 
 			# Compute critic loss
 			critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
-
+			print("Critic Iteration: " + str(it) + " ---- Loss: " + str(critic_loss))
 			# Optimize the critic
 			self.critic_optimizer.zero_grad()
 			critic_loss.backward()
@@ -156,7 +160,7 @@ class TD3(object):
 
 				# Compute actor loss
 				actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
-
+				print("Actor Iteration: " + str(it) + " ---- Loss: " + str(actor_loss))
 				# Optimize the actor
 				self.actor_optimizer.zero_grad()
 				actor_loss.backward()
@@ -172,6 +176,13 @@ class TD3(object):
 
 				for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
 					target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+		# We do batch 100, 1000 iterations == 100,000 timesteps
+		# But, we only update policy every 2nd time -> 10^5 happens once every train() call
+		LearningRate.getInstance().decay()
+		lr = LearningRate.getInstance().getLR()
+		self.adjust_actor_learning_rate(lr)
+		self.adjust_critic_learning_rate(lr)
 
 	def save(self, filename, directory):
 		torch.save(self.actor.state_dict(), '%s/%s_actor.pth' % (directory, filename))

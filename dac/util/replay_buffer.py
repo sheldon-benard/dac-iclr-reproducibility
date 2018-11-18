@@ -13,21 +13,22 @@ class ReplayBuffer(object):
 	# data = (state, action, next_state)
 	def add(self, data, done):
 		if done:
-			self.buffer.append((data[0], data[1], self.absorbingState))
+			self.buffer.append((data[0], data[1], self.absorbingState, False))
 		else:
-			self.buffer.append(data)
+			self.buffer.append((data[0], data[1], data[2], False))
 
 	def addAbsorbing(self):
-		self.buffer.append((self.absorbingState, self.zeroAction, self.absorbingState))
+		self.buffer.append((self.absorbingState, self.zeroAction, self.absorbingState, False))
 
 	def sample(self, batch_size=100):
 		ind = np.random.randint(0, len(self.buffer), size=batch_size)
-		s, a, ns = [], [], [], [], []
+		s, a, ns, d = [], [], [], []
 
 		for i in ind:
-			S,A,nS = self.storage[i]
+			S,A,nS, D = self.buffer[i]
 			s.append(np.array(S, copy=False))
 			a.append(np.array(A, copy=False))
 			ns.append(np.array(nS, copy=False))
+			d.append(np.array(D, copy=False))
 
-		return np.array(s), np.array(a), np.array(ns)
+		return np.array(s), np.array(a), np.array(ns), np.array(d)

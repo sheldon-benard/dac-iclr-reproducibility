@@ -35,12 +35,12 @@ class Dset(object):
         t = self.num_traj
 
         p = 1.0/(n-t + t/n)
-        self.probabilities = p * weights
+        self.probabilities = [p * weight for weight in weights]
         self.indicies = np.arange(len(inputs))
 
     def get_next_batch(self, batch_size):
         assert batch_size <= len(self.inputs)
-        indicies = np.random.choice(self.indicies, batch_size, p=self.probabilities, replace=False)
+        indicies = np.random.choice(self.indicies, batch_size, p=self.probabilities, replace=True)
 
         return self.inputs[indicies, :], self.labels[indicies, :]
 
@@ -73,7 +73,7 @@ class Mujoco_Dset(object):
 
         for i in range(temp_obs.shape[0]):
             obs[i], acs[i] = WrapAbsorbingState(env, temp_obs[i], temp_acs[i])
-            weights[len(obs[i]) - 1] = 1/n
+            weights[(i+1)*len(obs[i]) - 1] = 1/n
 
         # obs, acs: shape (N, L, ) + S where N = # episodes, L = episode length
         # and S is the environment observation/action space.
