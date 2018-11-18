@@ -59,7 +59,7 @@ def WrapAbsorbingState(env, obs, acs):
     return new_obs, new_acs
 
 class Mujoco_Dset(object):
-    def __init__(self, env, expert_path, train_fraction=0.7, traj_limitation=-1):
+    def __init__(self, env, expert_path, traj_limitation=-1):
         traj_data = np.load(expert_path)
         if traj_limitation < 0:
             traj_limitation = len(traj_data['obs'])
@@ -90,7 +90,6 @@ class Mujoco_Dset(object):
         self.num_traj = min(traj_limitation, len(traj_data['obs']))
         self.num_transition = len(self.obs)
         self.dset = Dset(self.obs, self.acs, weights, traj_limitation)
-        # for behavior cloning
         self.log_info()
 
     def log_info(self):
@@ -99,15 +98,9 @@ class Mujoco_Dset(object):
         logger.log("Average returns: %f" % self.avg_ret)
         logger.log("Std for returns: %f" % self.std_ret)
 
-    def get_next_batch(self, batch_size, split=None):
-        if split is None:
-            return self.dset.get_next_batch(batch_size)
-        elif split == 'train':
-            return self.train_set.get_next_batch(batch_size)
-        elif split == 'val':
-            return self.val_set.get_next_batch(batch_size)
-        else:
-            raise NotImplementedError
+    def get_next_batch(self, batch_size):
+        return self.dset.get_next_batch(batch_size)
+
 
     def plot(self):
         import matplotlib.pyplot as plt

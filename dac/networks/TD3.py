@@ -92,7 +92,16 @@ class TD3(object):
 		for param_group in self.actor_optimizer:
 			param_group['lr'] = lr
 
-	def train(self, discriminator, replay_buffer, iterations, batch_size=100, discount=0.99, tau=0.005, policy_noise=0.2,
+	def sample(self, state):
+		next_state = self.actor(state)
+		return torch.FloatTensor(next_state).to(device)
+
+	def reward(self, discriminator, states, actions):
+		states_actions = torch.cat([states, actions], 1)
+
+		return torch.FloatTensor(discriminator.reward(states_actions)).to(device)
+
+	def train(self, discriminator, replay_buf, iterations, batch_size=100, discount=0.99, tau=0.005, policy_noise=0.2,
 			  noise_clip=0.5, policy_freq=2):
 
 		lr = LearningRate.getInstance().getLR()
@@ -102,7 +111,7 @@ class TD3(object):
 
 		for it in range(iterations):
 
-			if it != 0 and it % (self.decay_steps) == 0:
+			if it != 0 and it % self.decay_steps == 0:
 				LearningRate.getInstance().decay()
 				lr = LearningRate.getInstance().getLR()
 				self.adjust_actor_learning_rate(lr)
@@ -110,14 +119,14 @@ class TD3(object):
 
 
 			# Sample replay buffer
-			x, y, u = replay_buffer.sample(batch_size)
+			x, y, u = replay_buf.sample(batch_size)
 			state = torch.FloatTensor(x).to(device)
 			action = torch.FloatTensor(u).to(device)
 			next_state = torch.FloatTensor(y).to(device)
 			# done = torch.FloatTensor(1 - d).to(device) # with absorbing state, there is no termination
 			# reward = torch.FloatTensor(r).to(device)
 
-			reward = torch.FloatTensor(discriminator.reward(state, action)).to(device)
+			reward = reward(discriminator, state, action)
 
 			# Select action according to policy and add clipped noise
 			noise = torch.FloatTensor(u).data.normal_(0, policy_noise).to(device)

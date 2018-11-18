@@ -34,4 +34,4 @@ class LearningRate:
 		self.decayFactor = d
 
 	def decay(self):
-		self.lr = self.lr / self.decayFactor
+		self.lr = self.lr * self.decayFactor
