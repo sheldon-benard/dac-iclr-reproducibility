@@ -1,3 +1,5 @@
+# Based on https://github.com/higgsfield/RL-Adventure-2/blob/master/8.gail.ipynb
+
 import math
 import random
 
@@ -26,7 +28,7 @@ class Discriminator(nn.Module):
 		self.linear3.bias.data.mul_(0.0)
 		self.criterion = nn.BCELoss()
 		self.optimizer = torch.optim.Adam(self.parameters())
-		self.LAMBDA = lamb
+		self.LAMBDA = lamb # used in gradient penalty
 		self.use_cuda = torch.cuda.is_available()
 
 	def forward(self, x):
@@ -60,17 +62,27 @@ class Discriminator(nn.Module):
 			state_action = torch.cat([state, action], 1)
 			expert_state_action = torch.cat([expert_obs, expert_act], 1)
 
+			# Prob -> 1 for fake, 0 for real
 			fake = self(state_action)
 			real = self(expert_state_action)
 
 			gradient_penalty = self._gradient_penalty(state_action, expert_state_action)
 
 			self.optimizer.zero_grad()
-			loss = self.criterion(fake, torch.ones((state_action.size(0), 1)).to(device)) - self.criterion(real, torch.zeros((expert_state_action.size(0), 1)).to(device)) + gradient_penalty
+			# loss = self.criterion(fake, torch.ones((state_action.size(0), 1)).to(device)) - self.criterion(real, torch.zeros((expert_state_action.size(0), 1)).to(device)) + gradient_penalty
+			# loss = (torch.log(fake).sum() + torch.log(1 - real).sum()) + gradient_penalty
+
+			# I think the pseudo-code loss is wrong. Refer to equation (2) of paper :
+			# They are maximizing the expectation of log(D(s,a)) + log(D(s',a'))
+			# which is equivalent to minimizing -sum(log(D(s,a)) + log(D(s',a')))
+			# + gradient penalty
+			loss = -(torch.log(fake) + torch.log(1 - real)).sum() + gradient_penalty
+
 			print("Adversary Iteration: " + str(it) + " ---- Loss: " + str(loss))
 			loss.backward()
 			self.optimizer.step()
 
+	# From https://github.com/EmilienDupont/wgan-gp/blob/master/training.py -> _gradient_penalty()
 	def _gradient_penalty(self, real_data, generated_data):
 		discriminator = self
 		batch_size = real_data.size()[0]
@@ -101,8 +113,10 @@ class Discriminator(nn.Module):
 
 		# Derivatives of the gradient close to 0 can cause problems because of
 		# the square root, so manually calculate norm and add epsilon
-		gradients_norm = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
+
+		#gradients_norm = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
 
 		# Return gradient penalty
-		return self.LAMBDA * ((gradients_norm - 1) ** 2).mean()
+		#return self.LAMBDA * ((gradients_norm - 1) ** 2).mean()
+		return self.LAMBDA * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
 

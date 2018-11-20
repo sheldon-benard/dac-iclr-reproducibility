@@ -9,7 +9,7 @@ import argparse
 import numpy as np
 
 def argsparser():
-    parser = argparse.ArgumentParser("Tensorflow Implementation of GAIL")
+    parser = argparse.ArgumentParser("DAC")
     parser.add_argument('--env_id', help='environment ID', default='Hopper-v2')
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
     parser.add_argument('--expert_path', type=str, default='../baselines/baselines/data/deterministic.trpo.Hopper.0.00.npz')
@@ -20,7 +20,7 @@ def argsparser():
 
 def main(args):
 	env = gym.make(args.env_id)
-	expert_buffer = Mujoco_Dset(env, args.expert_path, args.traj_num)
+	expert_buffer = Mujoco_Dset(env, args.expert_path, args.traj_num) # The buffer for the expert -> refer to dataset/mujoco_dset.py
 	actor_replay_buffer = ReplayBuffer(env)
 
 	state_dim = env.observation_space.shape[0]
@@ -28,21 +28,26 @@ def main(args):
 	max_action = float(env.action_space.high[0])
 
 	lr = LearningRate.getInstance()
-	lr.setLR(10**(-3))
-	lr.setDecay(1.0/2.0)
+	lr.setLR(10**(-3)) # Loss is 10e-3
+	lr.setDecay(1.0/2.0) # Decay is 1/2
 
-	td3 = TD3(state_dim, action_dim, max_action, 40, 10**5) #state_dim, action_dim, max_action, actor_clipping, decay_steps
+	# TD3(state_dim, action_dim, max_action, actor_clipping, decay_steps*) *Not used yet;
+	td3 = TD3(state_dim, action_dim, max_action, 40, 10**5)
 
+	# Input dim = state_dim + action_dim
 	discriminator = Discriminator(state_dim + action_dim)
 
-	batch_size = 100
-	num_steps = 10e7 # 1 million timesteps
-	T = 1000 # Trajectory length == T in the pseudo-code
+	batch_size = 100 #openReview: they state they do batch_size of 100
+	num_steps = 10e7 # 1 million timesteps -> in paper, they go to 1 million timesteps
+	T = 1000 # Trajectory length == T in the pseudo-code; 1000 is stated in openReview
+
+	# This may be wrong: since we update the policy every 2nd step of td3.train, we may need to double this
 	iterations = int(num_steps / (batch_size*T))
 
+	obs = env.reset()
 	for i in range(iterations):
-		# Sample from policy
-		obs = env.reset()
+		# Sample from policy; maybe we don't reset the environment -> since this may bias the policy toward initial observations
+		# obs = env.reset() -> I'm going to make this reset change now
 		for j in range(T):
 			action = td3.select_action(np.array(obs))
 			next_state, reward, done, _ = env.step(action)
@@ -52,16 +57,17 @@ def main(args):
 			else:
 				obs = next_state
 
-		actor_replay_buffer.addAbsorbing()
+		actor_replay_buffer.addAbsorbing() # May be wrong: ask them about absorbing state
 
 		discriminator.train(actor_replay_buffer, expert_buffer, T, batch_size)
 
 		td3.train(discriminator, actor_replay_buffer, T, batch_size) #discriminator, replay_buf, iterations, batch_size=100
 
-		evaluate_policy(env, td3)
+		evaluate_policy(args.env_id, td3)
 
 # Runs policy for X episodes and returns average reward
-def evaluate_policy(env, policy, eval_episodes=10):
+def evaluate_policy(env_name, policy, eval_episodes=10):
+	env = gym.make(env_name)
 	avg_reward = 0.
 	for _ in range(eval_episodes):
 		obs = env.reset()

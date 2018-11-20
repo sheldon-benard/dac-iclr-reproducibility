@@ -2,8 +2,6 @@
 We modified the mujoco_dset.py file from openAI/baselines/gail/dataset.
 '''
 
-
-
 '''
 Data structure of the input .npz:
 the data is save in python dictionary format with keys: 'acs', 'ep_rets', 'rews', 'obs'
@@ -23,6 +21,7 @@ class Dset(object):
         assert len(self.inputs) == len(self.labels)
         assert len(self.inputs) == len(weights)
         assert self.num_traj > 0
+
         #Calc probabilities from weights
 
         #If we have n samples (original states and newly added absorbing states)
@@ -44,6 +43,9 @@ class Dset(object):
 
         return self.inputs[indicies, :], self.labels[indicies, :]
 
+# This takes in 1 trajectory's observations and actions
+# and adds absorbing state 0-vector with same dimension as observation_space
+# and add absorbing action 0-vector with same dimension as action_space
 def WrapAbsorbingState(env, obs, acs):
     obs_space = env.observation_space
     acs_space = env.action_space
@@ -71,6 +73,8 @@ class Mujoco_Dset(object):
         n = traj_limitation * (temp_obs.shape[1] + 1)
         weights = [1 for i in range(n)]
 
+        # iterate through trajectories and add absorbing state
+        # Update importance weights for absorbing states
         for i in range(temp_obs.shape[0]):
             obs[i], acs[i] = WrapAbsorbingState(env, temp_obs[i], temp_acs[i])
             weights[(i+1)*len(obs[i]) - 1] = 1/n

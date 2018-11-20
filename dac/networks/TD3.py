@@ -106,12 +106,13 @@ class TD3(object):
 		states_actions = torch.cat([states, actions], 1)
 		output = torch.FloatTensor(discriminator(states_actions)).to(device)
 
-		rewards = []
-		for i in range(states_actions.size(0)):
-			reward = discriminator.criterion(output[i], torch.ones((1, 1)).to(device)) - discriminator.criterion(output[i], torch.zeros((1, 1)).to(device))
-			rewards.append(reward)
-
-		return torch.FloatTensor(np.array(rewards, dtype=np.float32).reshape(-1,1)).to(device)
+		# rewards = []
+		# for i in range(states_actions.size(0)):
+		# 	reward = discriminator.criterion(output[i], torch.ones((1, 1)).to(device)) - discriminator.criterion(output[i], torch.zeros((1, 1)).to(device))
+		# 	rewards.append(reward)
+		#
+		# return torch.FloatTensor(np.array(rewards, dtype=np.float32).reshape(-1,1)).to(device)
+		return torch.log(output) - torch.log(1 - output)
 
 	def train(self, discriminator, replay_buf, iterations, batch_size=100, discount=0.99, tau=0.005, policy_noise=0.2,
 			  noise_clip=0.5, policy_freq=2):
@@ -128,7 +129,7 @@ class TD3(object):
 			state = torch.FloatTensor(x).to(device)
 			action = torch.FloatTensor(y).to(device)
 			next_state = torch.FloatTensor(u).to(device)
-			done = torch.FloatTensor(1 - d).to(device).view(-1,1) # with absorbing state, there is no termination?
+			# done = torch.FloatTensor(1 - d).to(device).view(-1,1) # with absorbing state, there is no termination?
 			# reward = torch.FloatTensor(r).to(device)
 
 			reward = self.reward(discriminator, state, action)
@@ -141,8 +142,8 @@ class TD3(object):
 			# Compute the target Q value
 			target_Q1, target_Q2 = self.critic_target(next_state, next_action)
 			target_Q = torch.min(target_Q1, target_Q2)
-			target_Q = reward + (done * discount * target_Q).detach()
-			# target_Q = reward + (discount * target_Q).detach()
+			# target_Q = reward + (done * discount * target_Q).detach()
+			target_Q = reward + (discount * target_Q).detach()
 
 			# Get current Q estimates
 			current_Q1, current_Q2 = self.critic(state, action)
@@ -179,6 +180,8 @@ class TD3(object):
 
 		# We do batch 100, 1000 iterations == 100,000 timesteps
 		# But, we only update policy every 2nd time -> 10^5 happens once every train() call
+		# so, we can call this here
+
 		LearningRate.getInstance().decay()
 		lr = LearningRate.getInstance().getLR()
 		self.adjust_actor_learning_rate(lr)
