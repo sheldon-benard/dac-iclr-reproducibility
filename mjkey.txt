@@ -1,0 +1,20 @@
+MuJoCo Pro Trial license activation key, number 131509, type 6.
+
+Issued to Sheldon Benard <sheldon.benard@gmail.com>.
+
+Expires December 20, 2018.
+
+This file activates MuJoCo Pro on a single computer with id:
+LINUX_Prenistesttisr_pkojecD65417
+
+Do not modify this file. Its entire content, including the
+plain text section, is used by the activation manager.
+
+0011310358815a54f28dddeff62da4672d96d8e3e5cf838cfa60dd221856a3f5
+19cfdcd7724bf45bbdeb7025c09402ef1dc80a1defd82e209d6d7a760f31f7a6
+578d98abc69fea59b29dbebd3701ed20920dccc21bac5780a6788423fe36eab8
+149dda8deb98180fb425e348be6591f1a1d8f8d7ef1b417c34c12b686177d2fe
+a505b4ea0751b9c692cf1641e9b813e52424d9558677dfed691212cf98779ba0
+895edbae55d001e4e794dcebe2235a2806ef25cfa019ea7eb2949a92d52e8f28
+6ab18990379b350e712233d8c2afe3085f47ebde25dd78030a6836b25154dc98
+251241dcc413cf10fbfaadc2e66d31de306f70136b8d3033b9e3fd7472038a00
