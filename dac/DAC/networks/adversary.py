@@ -87,7 +87,7 @@ class Discriminator(nn.Module):
 			gen_loss = self.criterion(fake, torch.zeros((state_action.size(0),1)).to(device))
 			expert_loss = self.criterion(real, torch.ones((state_action.size(0), 1)).to(device))
 			logits = torch.cat([fake,real], 0)
-			entropy = np.mean(self.logit_bernoulli_entropy(logits))
+			entropy = torch.mean(self.logit_bernoulli_entropy(logits))
 			entropy_loss = -self.entropy_weight * entropy
 
 			self.optimizer.zero_grad()

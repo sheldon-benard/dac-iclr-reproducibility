@@ -58,7 +58,7 @@ def main(args):
 			else:
 				obs = next_state
 
-		actor_replay_buffer.addAbsorbing() # May be wrong: ask them about absorbing state
+		# actor_replay_buffer.addAbsorbing() # May be wrong: ask them about absorbing state
 
 		discriminator.train(actor_replay_buffer, expert_buffer, T, batch_size)
 

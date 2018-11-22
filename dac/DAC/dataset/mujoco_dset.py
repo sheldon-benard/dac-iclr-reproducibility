@@ -45,7 +45,8 @@ class Dset(object):
         n = len(weights)
         t = self.num_traj
 
-        p = 1.0/(n-t + t/n)
+        #p = 1.0/(n-t + t/n)                 # change when use absorbing layer
+	p = 1.0 / n
         self.probabilities = [p * weight for weight in weights]
         self.indicies = np.arange(len(inputs))
 
@@ -58,7 +59,10 @@ class Dset(object):
 # This takes in 1 trajectory's observations and actions
 # and adds absorbing state 0-vector with same dimension as observation_space
 # and add absorbing action 0-vector with same dimension as action_space
-def WrapAbsorbingState(env, obs, acs):
+
+
+"""  
+def WrapAbsorbingState(env, obs, acs):                                                                 # commenting the absorbing algo
     obs_space = env.observation_space
     acs_space = env.action_space
 
@@ -71,21 +75,29 @@ def WrapAbsorbingState(env, obs, acs):
     new_acs = np.concatenate((acs, random_action))
 
     return new_obs, new_acs
-
+"""
 class Mujoco_Dset(object):
     def __init__(self, env, expert_path, traj_limitation=-1):
         temp_obs, temp_acs, rets = load_dataset(expert_path, traj_limitation)
 
+	obs = np.zeros((temp_obs.shape[0], temp_obs.shape[1] , temp_obs.shape[2]))
+        acs = np.zeros((temp_acs.shape[0], temp_acs.shape[1] , temp_acs.shape[2]))
+	n = traj_limitation * (temp_obs.shape[1])
+	"""
         obs = np.zeros((temp_obs.shape[0], temp_obs.shape[1] + 1, temp_obs.shape[2]))
-        acs = np.zeros((temp_acs.shape[0], temp_acs.shape[1] + 1, temp_acs.shape[2]))
-        n = traj_limitation * (temp_obs.shape[1] + 1)
+        acs = np.zeros((temp_acs.shape[0], temp_acs.shape[1] + 1, temp_acs.shape[2]))        
+	n = traj_limitation * (temp_obs.shape[1] + 1)
+	"""
         weights = [1 for i in range(n)]
 
         # iterate through trajectories and add absorbing state
         # Update importance weights for absorbing states
-        for i in range(temp_obs.shape[0]):
+	
+	"""											# commenting the absorbing algo											
+        for i in range(temp_obs.shape[0]):                                                              
             obs[i], acs[i] = WrapAbsorbingState(env, temp_obs[i], temp_acs[i])
             weights[(i+1)*len(obs[i]) - 1] = 1/n
+	"""
 
         # obs, acs: shape (N, L, ) + S where N = # episodes, L = episode length
         # and S is the environment observation/action space.
