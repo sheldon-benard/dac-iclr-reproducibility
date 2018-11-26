@@ -10,7 +10,7 @@ import numpy as np
 def load_dataset(filename, limit_trajs, data_subsamp_freq=1):
     # Load expert data
     with h5py.File(filename, 'r') as f:
-        # Read data as written by vis_mj.py
+	# Read data as written by vis_mj.py
         full_dset_size = f['obs_B_T_Do'].shape[0] # full dataset size
         dset_size = min(full_dset_size, limit_trajs) if limit_trajs is not None else full_dset_size
 
@@ -26,47 +26,63 @@ def load_dataset(filename, limit_trajs, data_subsamp_freq=1):
 
 
 class Dset(object):
-    def __init__(self, obs, acs, num_traj, absorbing_state, absorbing_action):
-        self.obs = obs
-        self.acs = acs
-        self.num_traj = num_traj
-        assert len(self.obs) == len(self.acs)
-        assert self.num_traj > 0
-        self.steps_per_traj = int(len(self.obs) / num_traj)
+	def __init__(self, obs, acs, num_traj, absorbing_state, absorbing_action,absorb):
+		self.obs = obs
+		self.acs = acs
+		self.num_traj = num_traj
+		assert len(self.obs) == len(self.acs)
+		assert self.num_traj > 0
+		self.steps_per_traj = int(len(self.obs) / num_traj)
+		self.absorbing_state = absorbing_state
+		self.absorbing_action = absorbing_action
+	
+	def get_next_batch(self, batch_size,absorb):
+		assert batch_size <= len(self.obs)
+		num_samples_per_traj = int(batch_size / self.num_traj)
+		assert num_samples_per_traj*self.num_traj == batch_size
+		N = self.steps_per_traj / num_samples_per_traj # This is the importance weight for
+		j = num_samples_per_traj
+		if absorb == True:
+			num_samples_per_traj = num_samples_per_traj - 1 # make room for absorbing
 
-        self.absorbing_state = absorbing_state
-        self.absorbing_action = absorbing_action
-
-    def get_next_batch(self, batch_size):
-        assert batch_size <= len(self.obs)
-        num_samples_per_traj = int(batch_size / self.num_traj)
-        assert num_samples_per_traj*self.num_traj == batch_size
-        N = self.steps_per_traj / num_samples_per_traj # This is the importance weight for
-        j = num_samples_per_traj
-        num_samples_per_traj = num_samples_per_traj - 1 # make room for absorbing
-
-        obs = None
-        acs = None
-        weights = [1 for i in range(batch_size)]
-        while j <= batch_size:
-            weights[j-1] = 1.0/N
-            j = j+ num_samples_per_traj + 1
+		obs = None
+		acs = None
+		weights = [1 for i in range(batch_size)]
+		if absorb:
+			while j <= batch_size:
+				weights[j-1] = 1.0/N
+				j = j+ num_samples_per_traj + 1
 
 
-        for i in range(self.num_traj):
-            indicies = np.sort(np.random.choice(range(self.steps_per_traj*i,self.steps_per_traj*(i+1)), num_samples_per_traj, replace=False))
+		for i in range(self.num_traj):
+			indicies = np.sort(np.random.choice(range(self.steps_per_traj*i,self.steps_per_traj*(i+1)), num_samples_per_traj, replace=False))
 
-            if obs is None:
-                obs = np.concatenate((self.obs[indicies, :], self.absorbing_state), axis=0)
-            else:
-                obs = np.concatenate((obs, self.obs[indicies, :], self.absorbing_state), axis=0)
+			################# conditioning absrob wrapper
+			if absorb == True:
 
-            if acs is None:
-                acs = np.concatenate((self.acs[indicies, :], self.absorbing_action), axis=0)
-            else:
-                acs = np.concatenate((acs, self.acs[indicies, :], self.absorbing_action), axis=0)
+				if obs is None:
+					obs = np.concatenate((self.obs[indicies, :], self.absorbing_state), axis=0)
+				else:
+					obs = np.concatenate((obs, self.obs[indicies, :], self.absorbing_state), axis=0)
 
-        return obs, acs, weights
+				if acs is None:
+					acs = np.concatenate((self.acs[indicies, :], self.absorbing_action), axis=0)
+				else:
+					acs = np.concatenate((acs, self.acs[indicies, :], self.absorbing_action), axis=0)
+
+			else: 
+				if obs is None:
+					obs = self.obs[indicies, :]
+				else:
+					obs = np.concatenate((obs, self.obs[indicies, :]), axis=0)
+
+				if acs is None:
+					acs = self.acs[indicies, :]
+				else:
+					acs = np.concatenate((acs, self.acs[indicies, :]), axis=0)
+
+
+		return obs, acs, weights
 
 # This takes in 1 trajectory's observations and actions
 # and adds absorbing state 0-vector with same dimension as observation_space
@@ -86,7 +102,7 @@ class Dset(object):
 #     return new_obs, new_acs
 
 class Mujoco_Dset(object):
-    def __init__(self, env, expert_path, traj_limitation=-1):
+    def __init__(self, env, expert_path, traj_limitation=-1,absorb=False):
         obs, acs, rets = load_dataset(expert_path, traj_limitation)
 
         # obs, acs: shape (N, L, ) + S where N = # episodes, L = episode length
@@ -103,10 +119,10 @@ class Mujoco_Dset(object):
         assert len(self.obs) == len(self.acs)
         self.num_traj = len(rets)
         self.num_transition = len(self.obs)
-
+	#################### let's allow the absorbing initialization but will not affect in the loop later
         absorbing_state = np.zeros((1,env.observation_space.shape[0]),dtype=np.float32)
         zero_action = np.zeros_like(env.action_space.sample(),dtype=np.float32).reshape(1, env.action_space.shape[0])
-        self.dset = Dset(self.obs, self.acs, traj_limitation, absorbing_state, zero_action)
+        self.dset = Dset(self.obs, self.acs, traj_limitation, absorbing_state, zero_action,absorb)
         self.log_info()
 
     def log_info(self):
@@ -115,6 +131,6 @@ class Mujoco_Dset(object):
         print("Average returns: %f" % self.avg_ret)
         print("Std for returns: %f" % self.std_ret)
 
-    def get_next_batch(self, batch_size):
-        return self.dset.get_next_batch(batch_size)
+    def get_next_batch(self, batch_size,absorb):
+        return self.dset.get_next_batch(batch_size,absorb)
 

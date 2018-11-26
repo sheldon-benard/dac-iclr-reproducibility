@@ -5,20 +5,25 @@ import numpy as np
 
 # Simple replay buffer
 class ReplayBuffer(object):
-	def __init__(self, env):
+	def __init__(self, env,absorb=False):
 		self.buffer = [] # No size limitation, similar to the paper
 		self.zeroAction = np.zeros_like(env.action_space.sample(), dtype=np.float32)
-		self.absorbingState = np.zeros((env.observation_space.shape[0]),dtype=np.float32)
+		if absorb == True:
+			self.absorbingState = np.zeros((env.observation_space.shape[0]),dtype=np.float32)
 
 	# data = (state, action, next_state)
-	def add(self, data, done):
-		if done:
+	def add(self, data, done , absorb):
+		if done and absorb==True:
 			self.buffer.append((data[0], data[1], self.absorbingState, False))
+		elif done and absorb==False:
+			self.buffer.append((data[0], data[1], data[2], False))
 		else:
 			self.buffer.append((data[0], data[1], data[2], False))
-
-	def addAbsorbing(self):
-		self.buffer.append((self.absorbingState, self.zeroAction, self.absorbingState, False))
+	
+	def addAbsorbing(self,absorb):
+		########### absorb wrapper condition
+		if absorb == True:
+			self.buffer.append((self.absorbingState, self.zeroAction, self.absorbingState, False))
 
 	def sample(self, batch_size=100):
 		ind = np.random.randint(0, len(self.buffer), size=batch_size)

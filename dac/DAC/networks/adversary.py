@@ -19,7 +19,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # entropy_weight = 0.001 from openAI/imiation
 class Discriminator(nn.Module):
-	def __init__(self, num_inputs, hidden_size=100, lamb=10, entropy_weight=0.001):
+	def __init__(self, num_inputs, hidden_size=100, lamb=10, entropy_weight=0.001,absorb=True):
 		super(Discriminator, self).__init__()
 
 		self.linear1 = nn.Linear(num_inputs, hidden_size)
@@ -62,7 +62,7 @@ class Discriminator(nn.Module):
 	def logsigmoidminus(self, a):
 		return torch.log(1-torch.sigmoid(a))
 
-	def train(self, replay_buf, expert_buf, iterations, batch_size=100):
+	def train(self, replay_buf, expert_buf, iterations, batch_size=100,absorb =False):
 		lr = LearningRate.getInstance().getLR()
 		self.adjust_adversary_learning_rate(lr)
 
@@ -74,7 +74,7 @@ class Discriminator(nn.Module):
 			next_state = torch.FloatTensor(u).to(device)
 
 			# Sample expert buffer
-			expert_obs, expert_act, expert_weights = expert_buf.get_next_batch(batch_size)
+			expert_obs, expert_act, expert_weights = expert_buf.get_next_batch(batch_size,absorb)
 			expert_obs = torch.FloatTensor(expert_obs).to(device)
 			expert_act = torch.FloatTensor(expert_act).to(device)
 			expert_weights = torch.FloatTensor(expert_weights).to(device).view(-1, 1)
@@ -86,9 +86,9 @@ class Discriminator(nn.Module):
 			fake = self(state_action)
 			real = self(expert_state_action)
 
-			gradient_penalty = self._gradient_penalty(state_action, expert_state_action)
-			gen_loss = self.logsigmoid(fake).to(device)
-			expert_loss = (self.logsigmoidminus(real) * expert_weights).to(device)
+			gradient_penalty = self._gradient_penalty(expert_state_action, state_action)
+			gen_loss = F.logsigmoid(fake)
+			expert_loss = torch.log(1 - torch.sigmoid(real))
 
 			logits = torch.cat([fake,real], 0)
 			entropy = torch.mean(self.logit_bernoulli_entropy(logits))
@@ -98,7 +98,8 @@ class Discriminator(nn.Module):
 
 			# I think the pseudo-code loss is wrong. Refer to equation (2) of paper :
 			# MaxD E(D(s,a)) + E(1-D(s',a')) -> minimizing the negative of this
-			total_loss = -(gen_loss + expert_loss).sum() + entropy_loss + gradient_penalty
+			log_entropy = (gen_loss + expert_loss).sum()
+			total_loss = (log_entropy + entropy_loss + gradient_penalty) / 100
 
 			if it == 0 or it == iterations - 1:
 				print("Iteration: " + str(it) + " ---- Loss: " + str(total_loss) + " | Expert_loss: " + str(expert_loss.sum()) + " | Gen_loss: " + str(gen_loss.sum()) + " | Fake Prob: " + str(torch.sigmoid(fake[0])) + " | Real Prob: " + str(torch.sigmoid(real[0])))
@@ -141,5 +142,6 @@ class Discriminator(nn.Module):
 
 		# Return gradient penalty
 		#return self.LAMBDA * ((gradients_norm - 1) ** 2).mean()
-		return self.LAMBDA * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+		x = self.LAMBDA * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+		return x
 

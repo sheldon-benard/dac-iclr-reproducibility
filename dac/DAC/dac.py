@@ -18,10 +18,10 @@ def argsparser():
 
 
 
-def main(args):
+def main(args,absorb=False):
 	env = gym.make(args.env_id)
-	expert_buffer = Mujoco_Dset(env, args.expert_path, args.traj_num) # The buffer for the expert -> refer to dataset/mujoco_dset.py
-	actor_replay_buffer = ReplayBuffer(env)
+	expert_buffer = Mujoco_Dset(env, args.expert_path, args.traj_num,absorb) # The buffer for the expert -> refer to dataset/mujoco_dset.py
+	actor_replay_buffer = ReplayBuffer(env,absorb)
 
 	state_dim = env.observation_space.shape[0]
 	action_dim = env.action_space.shape[0]
@@ -54,15 +54,17 @@ def main(args):
 		for j in range(T):
 			action = td3.select_action(np.array(obs))
 			next_state, reward, done, _ = env.step(action)
-			actor_replay_buffer.add((obs, action, next_state), done)
+			########### absorb wrapper condition
+			actor_replay_buffer.add((obs, action, next_state), done, absorb)
 			steps_since_eval += 1
 			if done:
-				actor_replay_buffer.addAbsorbing()
+				if absorb == True:
+					actor_replay_buffer.addAbsorbing(absorb)
 				obs = env.reset()
 			else:
 				obs = next_state
 
-		discriminator.train(actor_replay_buffer, expert_buffer, T, batch_size)
+		discriminator.train(actor_replay_buffer, expert_buffer, T, batch_size,absorb)
 
 		td3.train(discriminator, actor_replay_buffer, T, batch_size) #discriminator, replay_buf, iterations, batch_size=100
 
@@ -92,6 +94,6 @@ def evaluate_policy(env_name, policy, eval_episodes=10):
 
 if __name__ == '__main__':
 	args = argsparser()
-	main(args)
+	main(args,absorb=True)
 
 
