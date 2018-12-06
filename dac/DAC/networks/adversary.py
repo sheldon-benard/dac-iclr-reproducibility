@@ -1,25 +1,19 @@
 # Based on https://github.com/higgsfield/RL-Adventure-2/blob/master/8.gail.ipynb
 
-import math
-import random
-
-import gym
-import numpy as np
-
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from util.learning_rate import LearningRate
 from torch.autograd import Variable
 from torch.autograd import grad as torch_grad
-from torch.distributions import Normal
+
+from DAC.util.learning_rate import LearningRate
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 # entropy_weight = 0.001 from openAI/imiation
 class Discriminator(nn.Module):
-	def __init__(self, num_inputs, hidden_size=100, lamb=10, entropy_weight=0.001):
+	def __init__(self, num_inputs, hidden_size=100, lamb=10, entropy_weight=0.001,
+				 aggregate="sum", loss="cross_entropy"):
 		super(Discriminator, self).__init__()
 
 		self.linear1 = nn.Linear(num_inputs, hidden_size)
@@ -30,11 +24,22 @@ class Discriminator(nn.Module):
 		self.criterion = nn.BCEWithLogitsLoss()
 		self.entropy_weight = entropy_weight
 		self.optimizer = torch.optim.Adam(self.parameters())
-		self.LAMBDA = lamb # used in gradient penalty
+		self.LAMBDA = lamb  # used in gradient penalty
 		self.use_cuda = torch.cuda.is_available()
+		if aggregate == "sum":
+			self.agg = torch.sum
+		else:
+			self.agg = torch.mean
+
+		if loss == "original":
+			self.loss = self.original_loss
+		elif loss == "without_typo":
+			self.loss = self.loss_without_first_typo
+		elif loss == "cross_entropy":
+			self.loss = self.ce_loss
 
 	def forward(self, x):
-		if not self.use_cuda: x = x.float()
+		# if not self.use_cuda: x = x.float()
 		x = torch.tanh(self.linear1(x))
 		x = torch.tanh(self.linear2(x))
 		# prob = torch.sigmoid(self.linear3(x))
@@ -45,12 +50,11 @@ class Discriminator(nn.Module):
 	def reward(self, x):
 		out = self(x)
 		probs = torch.sigmoid(out)
-		return torch.log(probs + 1e-8) - torch.log(1-probs + 1e-8)
-
+		return torch.log(probs + 1e-8) - torch.log(1 - probs + 1e-8)
 
 	def adjust_adversary_learning_rate(self, lr):
-		for param_group in self.optimizer.param_groups:
-			param_group['lr'] = lr
+		print("Setting adversary learning rate to: {}".format(lr))
+		self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
 
 	def logit_bernoulli_entropy(self, logits):
 		ent = (1. - torch.sigmoid(logits)) * logits - self.logsigmoid(logits)
@@ -60,11 +64,56 @@ class Discriminator(nn.Module):
 		return torch.log(torch.sigmoid(a))
 
 	def logsigmoidminus(self, a):
-		return torch.log(1-torch.sigmoid(a))
+		return torch.log(1 - torch.sigmoid(a))
 
-	def train(self, replay_buf, expert_buf, iterations, sum=True, batch_size=100):
-		lr = LearningRate.get_instance().get_learning_rate()
-		self.adjust_adversary_learning_rate(lr)
+	def original_loss(self, pred_on_learner, pred_on_expert, expert_weights):
+		"""The original loss function given in the paper.
+
+		Args:
+			pred_on_learner (torch.Tensor): The discriminator's prediction on the learner.
+			pred_on_expert (torch.Tensor): The discriminator's prediction on the expert.
+			expert_weights (torch.Tensor): The weighting to apply to the expert loss
+
+		Returns:
+			(torch.Tensor)
+		"""
+		learner_loss = torch.log(torch.sigmoid(pred_on_learner))
+		expert_loss = torch.log(1 - torch.sigmoid(pred_on_expert)) * expert_weights
+		return self.agg(learner_loss - expert_loss)
+
+	def loss_without_first_typo(self, pred_on_learner, pred_on_expert, expert_weights):
+		"""The loss function modified to fix the typo.
+
+		Args:
+			pred_on_learner (torch.Tensor): The discriminator's prediction on the learner.
+			pred_on_expert (torch.Tensor): The discriminator's prediction on the expert.
+			expert_weights (torch.Tensor): The weighting to apply to the expert loss
+
+		Returns:
+			(torch.Tensor)
+		"""
+		learner_loss = torch.log(torch.sigmoid(pred_on_learner))
+		expert_loss = torch.log(1 - torch.sigmoid(pred_on_expert)) * expert_weights
+		return self.agg(learner_loss + expert_loss)
+
+	def ce_loss(self, pred_on_learner, pred_on_expert, expert_weights):
+		"""Binary cross entropy loss.
+		We believe this is the loss function the authors to communicate.
+
+		Args:
+			pred_on_learner (torch.Tensor): The discriminator's prediction on the learner.
+			pred_on_expert (torch.Tensor): The discriminator's prediction on the expert.
+			expert_weights (torch.Tensor): The weighting to apply to the expert loss
+
+		Returns:
+			(torch.Tensor)
+		"""
+		learner_loss = torch.log(1 - torch.sigmoid(pred_on_learner))
+		expert_loss = torch.log(torch.sigmoid(pred_on_expert)) * expert_weights
+		return -self.agg(learner_loss + expert_loss)
+
+	def learn(self, replay_buf, expert_buf, iterations, batch_size=100):
+		self.adjust_adversary_learning_rate(LearningRate.get_instance().lr)
 
 		for it in range(iterations):
 			# Sample replay buffer
@@ -86,26 +135,27 @@ class Discriminator(nn.Module):
 			fake = self(state_action)
 			real = self(expert_state_action)
 
+			# Gradient penalty for regularization.
 			gradient_penalty = self._gradient_penalty(expert_state_action, state_action)
-			if sum:
-				gen_loss = torch.sum(self.logsigmoidminus(fake)).to(device)
-				expert_loss = torch.sum((self.logsigmoid(real) * expert_weights)).to(device)
-			else:
-				gen_loss = torch.mean(self.logsigmoidminus(fake)).to(device)
-				expert_loss = torch.mean((self.logsigmoid(real) * expert_weights)).to(device)
 
-			logits = torch.cat([fake,real], 0)
+			# Entropy Loss
+			logits = torch.cat([fake, real], 0)
 			entropy = torch.mean(self.logit_bernoulli_entropy(logits))
 			entropy_loss = -self.entropy_weight * entropy
+
+			# The main discriminator loss
+			main_loss = self.loss(fake, real, expert_weights)
 
 			self.optimizer.zero_grad()
 
 			# I think the pseudo-code loss is wrong. Refer to equation (2) of paper :
 			# MaxD E(D(s,a)) + E(1-D(s',a')) -> minimizing the negative of this
-			total_loss = -(gen_loss + expert_loss) + entropy_loss + gradient_penalty
+			total_loss = main_loss + entropy_loss + gradient_penalty
 
 			if it == 0 or it == iterations - 1:
-				print("Iteration: " + str(it) + " ---- Loss: " + str(total_loss) + " | Expert_loss: " + str(expert_loss) + " | Gen_loss: " + str(gen_loss) + " | Fake Prob: " + str(torch.sigmoid(fake[0])) + " | Real Prob: " + str(torch.sigmoid(real[0])))
+				print("Discr Iteration:  {:03} ---- Loss: {:.5f} | Learner Prob: {:.5f} | Expert Prob: {:.5f}".format(
+					it, total_loss.item(), torch.sigmoid(fake[0]).item(), torch.sigmoid(real[0]).item()
+				))
 			total_loss.backward()
 			self.optimizer.step()
 
@@ -141,9 +191,7 @@ class Discriminator(nn.Module):
 		# Derivatives of the gradient close to 0 can cause problems because of
 		# the square root, so manually calculate norm and add epsilon
 
-		#gradients_norm = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
+		# gradients_norm = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
 
 		# Return gradient penalty
-		#return self.LAMBDA * ((gradients_norm - 1) ** 2).mean()
 		return self.LAMBDA * ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-
